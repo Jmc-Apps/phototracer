@@ -320,14 +320,24 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     const ix = (cx - v.x)/v.s, iy = (cy - v.y)/v.s;
     v.s = ns; v.x = cx - ix*ns; v.y = cy - iy*ns;
   }
+  function refitKeep(v){
+    const r = v.canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    const nw = Math.max(1, Math.round(r.width*dpr)), nh = Math.max(1, Math.round(r.height*dpr));
+    if (r.width < 2 || r.height < 2 || (nw === v.canvas.width && nh === v.canvas.height)) return false;
+    const zoom = v.s / v.fit.s, c = toImg(v, {x:v.canvas.width/2, y:v.canvas.height/2}), fresh = zoom === 1 && v.x === v.fit.x && v.y === v.fit.y;
+    sizeView(v, v.w, v.h);
+    if (!fresh){ v.s = v.fit.s*zoom; v.x = v.canvas.width/2 - c.x*v.s; v.y = v.canvas.height/2 - c.y*v.s; }
+    return true;
+  }
   const toImg = (v,p) => ({x:(p.x - v.x)/v.s, y:(p.y - v.y)/v.s});
   const toScr = (v,p) => ({x:v.x + p.x*v.s, y:v.y + p.y*v.s});
 
   // One finger drives the tool (h.down / move / up); two fingers pinch-zoom and pan.
   function gestures(v, h){
     const pts = new Map(); let single = false, pinch = null;
-    const pt = e => { const r = v.canvas.getBoundingClientRect(); return {x:(e.clientX-r.left)*v.dpr, y:(e.clientY-r.top)*v.dpr}; };
+    const pt = e => { const r = v.canvas.getBoundingClientRect(); return {x:(e.clientX-r.left)*v.canvas.width/(r.width||1), y:(e.clientY-r.top)*v.canvas.height/(r.height||1)}; };
     v.canvas.addEventListener('pointerdown', e => {
+      if (refitKeep(v)) h.view();
       try { v.canvas.setPointerCapture(e.pointerId); } catch(_){}
       pts.set(e.pointerId, pt(e));
       if (pts.size === 1){ single = !!h.down(pt(e)); }
@@ -375,6 +385,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   function draw(){
     if (!src) return;
+    refitKeep(cv);
     const g = cv.ctx, d = cv.dpr, W = src.width*cv.s, H = src.height*cv.s;
     g.clearRect(0,0,cv.canvas.width,cv.canvas.height);
     g.imageSmoothingEnabled = cv.s < 2;
@@ -436,10 +447,12 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     cancel(){ if (drag){ corners[drag.i].x = drag.ox; corners[drag.i].y = drag.oy; } drag = null; loupe.hidden = true; draw(); },
     view(){ draw(); }
   });
-  window.addEventListener('resize', () => {
-    if (!$('editDeck').hidden) layout();
-    else if (bw.on && crop){ sizeView(bv, crop.w, crop.h); requestBW(); }
-  });
+  function onLayoutChange(){
+    if (!$('editDeck').hidden){ if (src && refitKeep(cv)) draw(); }
+    else if (bw.on && crop && !$('bwView').hidden){ if (refitKeep(bv)) requestBW(); }
+  }
+  window.addEventListener('resize', onLayoutChange);
+  if (window.ResizeObserver) new ResizeObserver(onLayoutChange).observe($('stage'));
 
   // ---------- perspective warp ----------
   // Homography mapping output rect (u,v) -> source quad (x,y).
@@ -615,6 +628,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   function requestBW(){ if (!bwQueued){ bwQueued = true; requestAnimationFrame(() => { bwQueued = false; drawBW(); }); } }
   function drawBW(){
     if (!bw.on || !prev || $('bwView').hidden) return;
+    refitKeep(bv);
     const g = bv.ctx, d = bv.dpr, W = crop.w*bv.s, H = crop.h*bv.s;
     if (!checker || checker.d !== d){
       const t = document.createElement('canvas'), n = Math.round(8*d); t.width = t.height = n*2;
@@ -742,6 +756,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     syncSaveUI();
   }
   $('bwOn').addEventListener('change', e => setBW(e.target.checked));
+  document.querySelector('details.more').addEventListener('toggle', () => requestBW());
   $('bgCol').addEventListener('input', e => {
     const v = e.target.value; bw.col = [1,3,5].map(i => parseInt(v.slice(i,i+2),16)); bw.picked = true; computeBase();
   });
@@ -757,6 +772,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     bw.tool = t; [...$('tool').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
     $('brushRow').hidden = t === 'pick';
     $('bwView').style.cursor = t === 'pick' ? 'crosshair' : 'none';
+    requestBW();
   };
 
   // Remove small black specks and fill small see-through pinholes inside black areas.
