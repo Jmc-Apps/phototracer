@@ -56,6 +56,13 @@ h1 .logo{width:28px;height:28px;flex:none}
 .tools .seg button{flex:1;padding-inline:6px}
 .icon{flex:none;width:40px;height:36px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;font-size:1.15rem;line-height:1;cursor:pointer}
 .icon:disabled{opacity:.35;cursor:default}
+#loupe{z-index:4}
+.mini{flex:none;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:10px;padding:8px 10px;font:600 .78rem var(--display);cursor:pointer}
+.mini:disabled{opacity:.4;cursor:default}
+#ptType button{display:flex;align-items:center;gap:6px}
+.pt{width:9px;height:9px;border-radius:50%;border:2px solid var(--accent);background:var(--surface);flex:none}
+.pt.sq{border-radius:1px}
+#traceBar .row{gap:6px}
 details.more summary{font-size:.82rem;font-weight:700;color:var(--muted);cursor:pointer;padding-block:2px}
 details.more[open] summary{margin-bottom:8px}
 .switch{display:flex;align-items:center;gap:10px;font-weight:700;font-size:.92rem;cursor:pointer}
@@ -113,7 +120,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     <canvas id="view"></canvas>
     <canvas id="loupe" width="240" height="240" hidden></canvas>
     <div class="badge" id="badge">Sample photo</div>
-    <div id="result" hidden><img id="outImg" alt="Cropped and flattened result"><canvas id="bwView" hidden></canvas></div>
+    <div id="result" hidden><canvas id="bwView"></canvas></div>
     <div class="zoomui" id="zoomUI"><span id="zoomPct">100%</span><button id="fitBtn" type="button">Fit</button></div>
     <div class="busy" id="busy" hidden>Flattening…</div>
   </div>
@@ -151,22 +158,40 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   </div>
 
   <div class="deck" id="doneDeck" hidden>
+    <div class="row tools">
+      <div class="seg" id="tool" role="group" aria-label="Tool">
+        <button data-t="view" aria-pressed="true">Move</button>
+        <button data-t="trace" aria-pressed="false">Trace</button>
+        <button data-t="pick" aria-pressed="false">Pick</button>
+        <button data-t="erase" aria-pressed="false">Erase</button>
+        <button data-t="paint" aria-pressed="false">Paint</button>
+      </div>
+      <button class="icon" id="undoBtn" aria-label="Undo" disabled>↶</button>
+      <button class="icon" id="redoBtn" aria-label="Redo" disabled>↷</button>
+    </div>
+    <div id="traceBar" class="bwbox" hidden>
+      <div class="row">
+        <div class="seg" id="ptType" role="group" aria-label="Point type">
+          <button data-pt="corner" aria-pressed="true"><span class="pt sq"></span>Corner</button>
+          <button data-pt="curve" aria-pressed="false"><span class="pt"></span>Curve</button>
+        </div>
+        <button class="mini" id="delPt" disabled>Delete</button>
+        <button class="mini" id="closeShape" disabled>Close</button>
+        <button class="mini" id="clearTrace" disabled>Clear</button>
+      </div>
+      <p class="hint" id="traceHint"></p>
+    </div>
+    <label class="slider" id="brushRow" for="brush" hidden><span>Brush size</span><input type="range" id="brush" min="2" max="60" value="14"><output id="brushV">14</output></label>
     <label class="switch"><input type="checkbox" id="bwOn"><span class="track"></span>Black &amp; transparent PNG</label>
     <div id="bwBox" class="bwbox" hidden>
-      <div class="row tools">
-        <input type="color" id="bgCol" value="#ffffff" aria-label="Background colour">
-        <div class="seg" id="tool" role="group" aria-label="Tool">
-          <button data-t="pick" aria-pressed="true">Pick</button>
-          <button data-t="erase" aria-pressed="false">Erase</button>
-          <button data-t="paint" aria-pressed="false">Paint</button>
-        </div>
-        <button class="icon" id="undoBtn" aria-label="Undo" disabled>↶</button>
-        <button class="icon" id="redoBtn" aria-label="Redo" disabled>↷</button>
-      </div>
-      <label class="slider" id="brushRow" for="brush" hidden><span>Brush size</span><input type="range" id="brush" min="2" max="60" value="14"><output id="brushV">14</output></label>
       <details class="more">
         <summary>Detection settings</summary>
         <div class="bwbox">
+          <p class="hint" id="traceNote" hidden>Your traced outline is used instead of colour detection. Clear the trace to use these settings again.</p>
+          <div class="row">
+            <input type="color" id="bgCol" value="#ffffff" aria-label="Background colour">
+            <span class="hint">Background colour. Use Pick to sample it from the photo.</span>
+          </div>
           <label class="slider" for="tol"><span>Tolerance</span><input type="range" id="tol" min="0" max="100" value="25"><output id="tolV">25</output></label>
           <label class="slider" for="soft"><span>Edge softness</span><input type="range" id="soft" min="0" max="50" value="6"><output id="softV">6</output></label>
           <label class="slider" for="smooth"><span>SVG smoothing</span><input type="range" id="smooth" min="0" max="100" value="40"><output id="smoothV">40</output></label>
@@ -376,7 +401,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   }
   $('fitBtn').onclick = () => {
     if (!$('editDeck').hidden){ resetView(cv); draw(); }
-    else if (bw.on){ resetView(bv); requestBW(); }
+    else if (crop){ resetView(bv); requestBW(); }
   };
 
   // ---------- crop screen ----------
@@ -449,7 +474,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   });
   function onLayoutChange(){
     if (!$('editDeck').hidden){ if (src && refitKeep(cv)) draw(); }
-    else if (bw.on && crop && !$('bwView').hidden){ if (refitKeep(bv)) requestBW(); }
+    else if (crop && !$('result').hidden){ if (refitKeep(bv)) requestBW(); }
   }
   window.addEventListener('resize', onLayoutChange);
   if (window.ResizeObserver) new ResizeObserver(onLayoutChange).observe($('stage'));
@@ -496,13 +521,16 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   }
 
   // ---------- crop + output ----------
-  let crop = null;        // full-size crop: {data: ImageData, w, h, mmW, mmH, base}
+  let crop = null;        // full-size crop: {data: ImageData, canvas, w, h, mmW, mmH, base}
   let prev = null;        // working copy for the cleanup screen (max 1400 px)
   let edit = null;        // manual brush layer at full size: 0 = auto, 1 = erased, 2 = painted black
   let undoStack = [], redoStack = [];
-  let jpgBlob = null, pngBlob = null, pngStale = true, fullTimer = 0, imgURL = null;
-  const bw = { on:false, col:[255,255,255], tol:25, soft:6, clean:1, picked:false, tool:'pick', brush:14 };
+  let jpgBlob = null, pngBlob = null, pngStale = true, fullTimer = 0;
+  const bw = { on:false, col:[255,255,255], tol:25, soft:6, clean:1, picked:false, tool:'view', brush:14 };
   const bv = makeView($('bwView'));
+
+  // manual trace: shapes in full-crop pixel coordinates; c = smooth curve through this point, else sharp corner
+  let shapes = [], active = -1, sel = null, newCurve = false, tr = null;
 
   $('cropBtn').onclick = () => {
     if (!src) return;
@@ -514,15 +542,16 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
         const c = document.createElement('canvas'); c.width = o.w; c.height = o.h;
         c.getContext('2d').putImageData(data, 0, 0);
         const label = sizeId === 'custom' ? 'custom' : sizeId;
-        crop = {data, w:o.w, h:o.h, mmW:o.mmW, mmH:o.mmH, base:`photo-tracer-${label}-${o.w}x${o.h}`};
+        crop = {data, canvas:c, w:o.w, h:o.h, mmW:o.mmW, mmH:o.mmH, base:`photo-tracer-${label}-${o.w}x${o.h}`};
         const k = Math.min(1, 1400/Math.max(o.w,o.h));
         const pw = Math.max(1, Math.round(o.w*k)), ph = Math.max(1, Math.round(o.h*k));
         const pc = document.createElement('canvas'); pc.width = pw; pc.height = ph;
         const pg = pc.getContext('2d'); pg.drawImage(c, 0, 0, pw, ph);
         const dc = document.createElement('canvas'); dc.width = pw; dc.height = ph;
-        prev = {data: pg.getImageData(0,0,pw,ph), w:pw, h:ph, base:new Uint8Array(pw*ph),
+        prev = {data: pg.getImageData(0,0,pw,ph), colour: pc, w:pw, h:ph, base:new Uint8Array(pw*ph),
                 disp:new ImageData(pw,ph), dc, dctx:dc.getContext('2d'), ...maps(pw, ph)};
         edit = new Uint8Array(o.w*o.h); undoStack = []; redoStack = []; syncUndo();
+        shapes = []; active = -1; sel = null; tr = null;
         pngBlob = null; pngStale = true; bw.picked = false;
         c.toBlob(blob => {
           $('busy').hidden = true;
@@ -541,27 +570,22 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     return {colMap, rowMap};
   }
 
-  function setImg(blob){
-    if (imgURL) URL.revokeObjectURL(imgURL);
-    imgURL = URL.createObjectURL(blob); $('outImg').src = imgURL;
-    $('outImg').hidden = false; $('bwView').hidden = true; updateZoomUI(null);
-  }
   function showDone(o){
     $('result').hidden = false; $('editDeck').hidden = true; $('doneDeck').hidden = false;
     $('modeTag').textContent = `${o.w} × ${o.h} px`;
-    if (bw.on) enterBW(); else setImg(jpgBlob);
-    syncSaveUI();
+    sizeView(bv, crop.w, crop.h);
+    if (bw.on) enterBW();
+    setTool(bw.tool); syncTraceUI(); syncSaveUI(); requestBW();
   }
   function syncSaveUI(){
-    $('saveBtn').hidden = false;
     $('saveBtn').textContent = bw.on ? 'Save PNG' : 'Save JPG';
     $('svgBtn').hidden = !bw.on;
-    $('saveHint').textContent = !bw.on ? 'Tap Save, or press and hold the image to save it.'
-      : pngStale ? 'Updating full-size PNG…' : 'Pinch with two fingers to zoom and move.';
+    $('saveHint').textContent = !bw.on ? 'Save keeps the flattened photo. Turn on Black & transparent for a cutout.'
+      : pngStale ? 'Updating full-size PNG…' : 'Ready to save. Pinch with two fingers to zoom.';
   }
   function showEdit(){
     $('result').hidden = true; $('editDeck').hidden = false; $('doneDeck').hidden = true;
-    $('modeTag').textContent = 'Drag the 4 corners';
+    loupe.hidden = true; $('modeTag').textContent = 'Drag the 4 corners';
   }
   $('backBtn').onclick = () => { showEdit(); layout(); };
 
@@ -591,8 +615,17 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     if (bw.clean) cleanUp(o, W, H, (bw.clean===1 ? Math.max(6, full*0.00004) : Math.max(24, full*0.0003))*scale);
     return out;
   }
-  function processBW(img, W, H){ return processBWScaled(img, W, H, 1); }
-  // Manual brush strokes win over the automatic result.
+  // The black mask for a W×H grid: the traced outline when there is one, otherwise colour detection.
+  function maskImage(W, H, getImg){
+    if (traceActive()){
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.fillStyle = '#000';
+      g.fill(fillPath(W/crop.w, H/crop.h, 0, 0), 'evenodd');
+      return g.getImageData(0, 0, W, H);
+    }
+    return processBWScaled(getImg(), W, H, (W*H)/(crop.w*crop.h));
+  }
+  // Manual brush strokes win over the automatic or traced result.
   function applyEdits(o, W, H, colMap, rowMap){
     for (let y=0, i=0; y<H; y++){
       const row = rowMap ? rowMap[y] : y*W;
@@ -604,7 +637,8 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   }
 
   function computeBase(){
-    const out = processBWScaled(prev.data, prev.w, prev.h, (prev.w*prev.h)/(crop.w*crop.h)).data;
+    if (!bw.on || !prev) return;
+    const out = maskImage(prev.w, prev.h, () => prev.data).data;
     for (let i=0;i<prev.base.length;i++) prev.base[i] = out[i*4+3];
     compose(0, 0, prev.w, prev.h);
     pngStale = true; syncSaveUI(); requestBW(); renderFullLater();
@@ -623,25 +657,105 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     prev.dctx.putImageData(prev.disp, 0, 0, x0, y0, x1-x0, y1-y0);
   }
 
-  // cleanup screen drawing
-  let checker = null, bwCursor = null, bwQueued = false;
-  function requestBW(){ if (!bwQueued){ bwQueued = true; requestAnimationFrame(() => { bwQueued = false; drawBW(); }); } }
-  function drawBW(){
-    if (!bw.on || !prev || $('bwView').hidden) return;
-    refitKeep(bv);
-    const g = bv.ctx, d = bv.dpr, W = crop.w*bv.s, H = crop.h*bv.s;
-    if (!checker || checker.d !== d){
-      const t = document.createElement('canvas'), n = Math.round(8*d); t.width = t.height = n*2;
-      const tg = t.getContext('2d'); tg.fillStyle = '#ffffff'; tg.fillRect(0,0,n*2,n*2);
-      tg.fillStyle = '#cfd6d1'; tg.fillRect(0,0,n,n); tg.fillRect(n,n,n,n);
-      checker = {d, p: g.createPattern(t, 'repeat')};
+  // ---------- trace geometry ----------
+  const traceActive = () => shapes.some(s => s.closed && s.pts.length >= 3);
+  // Cubic segments through the points. A curve point gets a Catmull-Rom tangent; a corner point gets none (sharp).
+  function segments(sh){
+    const P = sh.pts, n = P.length, out = []; if (n < 2) return out;
+    const T = P.map((p,i) => {
+      if (!p.c) return {x:0, y:0};
+      const a = sh.closed ? P[(i-1+n)%n] : P[Math.max(0,i-1)], b = sh.closed ? P[(i+1)%n] : P[Math.min(n-1,i+1)];
+      return {x:(b.x-a.x)/2, y:(b.y-a.y)/2};
+    });
+    const m = sh.closed ? n : n-1;
+    for (let i=0;i<m;i++){
+      const j = (i+1)%n, a = P[i], b = P[j];
+      out.push([a.x, a.y, a.x+T[i].x/3, a.y+T[i].y/3, b.x-T[j].x/3, b.y-T[j].y/3, b.x, b.y]);
     }
+    return out;
+  }
+  function addShape(path, sh, sx, sy, ox, oy){
+    const S = segments(sh); if (!S.length) return;
+    path.moveTo(ox+S[0][0]*sx, oy+S[0][1]*sy);
+    for (const q of S) path.bezierCurveTo(ox+q[2]*sx, oy+q[3]*sy, ox+q[4]*sx, oy+q[5]*sy, ox+q[6]*sx, oy+q[7]*sy);
+    if (sh.closed) path.closePath();
+  }
+  // Even-odd fill: a shape inside a shape is a hole, a shape inside that hole is solid again, and so on.
+  function fillPath(sx, sy, ox, oy){
+    const p = new Path2D();
+    for (const sh of shapes) if (sh.closed && sh.pts.length >= 3) addShape(p, sh, sx, sy, ox, oy);
+    return p;
+  }
+
+  // ---------- result view drawing (photo or cutout, plus the trace overlay) ----------
+  let checker = null, bwCursor = null, bwQueued = false;
+  function requestBW(){ if (!bwQueued){ bwQueued = true; requestAnimationFrame(() => { bwQueued = false; drawResult(); }); } }
+  // draw only the visible part of a (possibly reduced) copy of the crop
+  function drawClipped(g, img, ox, oy, s){
+    const f = img.width/crop.w, cw = g.canvas.width, ch = g.canvas.height;
+    const x0 = Math.max(0, -ox/s), y0 = Math.max(0, -oy/s), x1 = Math.min(crop.w, (cw-ox)/s), y1 = Math.min(crop.h, (ch-oy)/s);
+    if (x1 <= x0 || y1 <= y0) return;
+    g.imageSmoothingEnabled = s/f < 2;
+    g.drawImage(img, x0*f, y0*f, (x1-x0)*f, (y1-y0)*f, ox+x0*s, oy+y0*s, (x1-x0)*s, (y1-y0)*s);
+  }
+  function paintImage(g, ox, oy, s, hi){
+    if (bw.on){
+      if (g === bv.ctx){
+        if (!checker || checker.d !== bv.dpr){
+          const t = document.createElement('canvas'), n = Math.round(8*bv.dpr); t.width = t.height = n*2;
+          const tg = t.getContext('2d'); tg.fillStyle = '#ffffff'; tg.fillRect(0,0,n*2,n*2);
+          tg.fillStyle = '#cfd6d1'; tg.fillRect(0,0,n,n); tg.fillRect(n,n,n,n);
+          checker = {d:bv.dpr, p:g.createPattern(t, 'repeat')};
+        }
+        g.fillStyle = checker.p;
+      } else g.fillStyle = '#ffffff';
+      g.fillRect(ox, oy, crop.w*s, crop.h*s);
+      drawClipped(g, prev.dc, ox, oy, s);
+    } else drawClipped(g, (hi || s > prev.w/crop.w*1.3) ? crop.canvas : prev.colour, ox, oy, s);
+  }
+  const showOverlay = () => bw.tool === 'trace' || (!bw.on && shapes.length > 0);
+  function ghostPoint(){ return tr && tr.mode === 'add' ? clampImg(toImg(bv, tr.p)) : null; }
+  function drawOverlay(g, ox, oy, s, d){
+    const ghost = ghostPoint();
+    if (!shapes.length && !ghost) return;
+    const acc = css('--accent') || '#ff8a3d';
+    if (!bw.on && traceActive()){ g.fillStyle = 'rgba(255,138,61,.28)'; g.fill(fillPath(s, s, ox, oy), 'evenodd'); }
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    for (const sh of shapes){
+      const p = new Path2D(); addShape(p, sh, s, s, ox, oy);
+      g.lineWidth = 4.5*d; g.strokeStyle = 'rgba(0,0,0,.55)'; g.stroke(p);
+      g.lineWidth = 2*d; g.strokeStyle = acc; g.stroke(p);
+    }
+    if (ghost){
+      const gx = ox+ghost.x*s, gy = oy+ghost.y*s;
+      if (active >= 0){
+        const L = shapes[active].pts[shapes[active].pts.length-1];
+        g.setLineDash([6*d, 5*d]); g.lineWidth = 2*d; g.strokeStyle = acc;
+        g.beginPath(); g.moveTo(ox+L.x*s, oy+L.y*s); g.lineTo(gx, gy); g.stroke(); g.setLineDash([]);
+      }
+      g.beginPath(); g.arc(gx, gy, 5*d, 0, 7); g.fillStyle = 'rgba(255,255,255,.6)'; g.fill();
+      g.lineWidth = 2*d; g.strokeStyle = acc; g.stroke();
+    }
+    shapes.forEach((sh, si) => sh.pts.forEach((q, i) => {
+      const x = ox+q.x*s, y = oy+q.y*s, isSel = sel && sel.s === si && sel.i === i, r = (isSel ? 7 : 5)*d;
+      if (si === active && i === 0 && sh.pts.length >= 3){   // closing target
+        g.beginPath(); g.arc(x, y, r+6*d, 0, 7); g.lineWidth = 2*d; g.strokeStyle = acc; g.stroke();
+      }
+      g.beginPath();
+      if (q.c) g.arc(x, y, r, 0, 7); else g.rect(x-r, y-r, 2*r, 2*r);
+      g.fillStyle = isSel ? acc : '#ffffff'; g.fill();
+      g.lineWidth = 2*d; g.strokeStyle = isSel ? '#ffffff' : acc; g.stroke();
+    }));
+  }
+  function drawResult(){
+    if (!crop || !prev || $('result').hidden) return;
+    refitKeep(bv);
+    const g = bv.ctx, d = bv.dpr;
     g.setTransform(1,0,0,1,0,0);
-    g.fillStyle = css('--mat') || '#1f4d3a'; g.fillRect(0,0,bv.canvas.width,bv.canvas.height);
-    g.fillStyle = checker.p; g.fillRect(bv.x, bv.y, W, H);
-    g.imageSmoothingEnabled = W/prev.w < 2;
-    g.drawImage(prev.dc, bv.x, bv.y, W, H);
-    if (bwCursor && bw.tool !== 'pick'){
+    g.fillStyle = css('--mat') || '#1f4d3a'; g.fillRect(0, 0, bv.canvas.width, bv.canvas.height);
+    paintImage(g, bv.x, bv.y, bv.s, false);
+    if (showOverlay()) drawOverlay(g, bv.x, bv.y, bv.s, d);
+    if (bwCursor && (bw.tool === 'erase' || bw.tool === 'paint')){
       const r = bw.brush*d;
       g.lineWidth = 2*d; g.strokeStyle = '#ffffff'; g.beginPath(); g.arc(bwCursor.x, bwCursor.y, r, 0, 7); g.stroke();
       g.lineWidth = 1*d; g.strokeStyle = bw.tool === 'erase' ? '#e2661a' : '#111111'; g.beginPath(); g.arc(bwCursor.x, bwCursor.y, r+1.5*d, 0, 7); g.stroke();
@@ -649,15 +763,41 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     updateZoomUI(bv);
   }
   function enterBW(){
-    $('outImg').hidden = true; $('bwView').hidden = false;
-    sizeView(bv, crop.w, crop.h);
     if (!bw.picked) autoPick();
     computeBase();
   }
+  // magnifier for tracing: 3× the current zoom, with the outline and points drawn in
+  function traceLoupe(ip, p){
+    const leftHalf = p.x < bv.canvas.width/2;
+    loupe.style.left = leftHalf ? '' : '10px'; loupe.style.right = leftHalf ? '10px' : '';
+    loupe.hidden = false;
+    const k = bv.s / bv.dpr * 3 * 2, ox = 120 - ip.x*k, oy = 120 - ip.y*k;
+    lctx.setTransform(1,0,0,1,0,0);
+    lctx.fillStyle = '#000'; lctx.fillRect(0, 0, 240, 240);
+    paintImage(lctx, ox, oy, k, true);
+    drawOverlay(lctx, ox, oy, k, 1.3);
+    lctx.strokeStyle = '#ffffff'; lctx.lineWidth = 3;
+    lctx.beginPath(); lctx.moveTo(120,96); lctx.lineTo(120,110); lctx.moveTo(120,130); lctx.lineTo(120,144); lctx.moveTo(96,120); lctx.lineTo(110,120); lctx.moveTo(130,120); lctx.lineTo(144,120); lctx.stroke();
+    lctx.strokeStyle = css('--accent') || '#ff8a3d'; lctx.lineWidth = 1.5; lctx.stroke();
+  }
+
+  // ---------- undo / redo (brush strokes and trace edits share one history) ----------
+  function pushUndo(e){ undoStack.push(e); if (undoStack.length > 60) undoStack.shift(); redoStack = []; syncUndo(); }
+  function syncUndo(){ $('undoBtn').disabled = !undoStack.length; $('redoBtn').disabled = !redoStack.length; }
+  const snap = () => ({shapes: JSON.parse(JSON.stringify(shapes)), active});
+  function restoreSnap(sn){ shapes = sn.shapes; active = sn.active; sel = null; }
+  function step(from, to){
+    const e = from.pop(); if (!e) return;
+    if (e.kind === 'tiles'){ to.push({kind:'tiles', m:tilesRestore(e.m)}); afterEditChange(); }
+    else { to.push({kind:'trace', snap:snap()}); restoreSnap(e.snap); afterTraceChange(); }
+    syncUndo();
+  }
+  $('undoBtn').onclick = () => step(undoStack, redoStack);
+  $('redoBtn').onclick = () => step(redoStack, undoStack);
 
   // ---------- brush (erase / paint black) with tile-based undo ----------
   const TILE = 64;
-  let stroke = null, pickPending = null;
+  let stroke = null, pickPending = null, pan = null;
   function tileSave(map, ti){
     if (map.has(ti)) return;
     const tw = Math.ceil(crop.w/TILE), tx = (ti % tw)*TILE, ty = Math.floor(ti / tw)*TILE;
@@ -666,7 +806,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     map.set(ti, {tx, ty, ww, hh, a});
   }
   function tilesRestore(map){
-    const back = new Map(), tw = Math.ceil(crop.w/TILE);
+    const back = new Map();
     for (const [ti, t] of map){
       tileSave(back, ti);
       for (let y=0;y<t.hh;y++) edit.set(t.a.subarray(y*t.ww, (y+1)*t.ww), (t.ty+y)*crop.w+t.tx);
@@ -700,29 +840,158 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     }
     bwCursor = p; requestBW();
   }
-  function syncUndo(){ $('undoBtn').disabled = !undoStack.length; $('redoBtn').disabled = !redoStack.length; }
-  function afterEditChange(){ compose(0,0,prev.w,prev.h); pngStale = true; syncSaveUI(); requestBW(); renderFullLater(); syncUndo(); }
-  $('undoBtn').onclick = () => { const m = undoStack.pop(); if (!m) return; redoStack.push(tilesRestore(m)); afterEditChange(); };
-  $('redoBtn').onclick = () => { const m = redoStack.pop(); if (!m) return; undoStack.push(tilesRestore(m)); afterEditChange(); };
+  function afterEditChange(){ compose(0,0,prev.w,prev.h); pngStale = true; syncSaveUI(); requestBW(); renderFullLater(); }
+
+  // ---------- trace editing ----------
+  const clampImg = q => ({x:Math.max(0, Math.min(crop.w, q.x)), y:Math.max(0, Math.min(crop.h, q.y))});
+  function hitPoint(p){
+    let best = null, bd = (22*bv.dpr)**2;
+    shapes.forEach((sh, s) => sh.pts.forEach((q, i) => {
+      const sp = toScr(bv, q), d = (sp.x-p.x)**2 + (sp.y-p.y)**2;
+      if (d < bd){ bd = d; best = {s, i}; }
+    }));
+    return best;
+  }
+  function hitSegment(p){
+    let best = null, bd = (16*bv.dpr)**2;
+    shapes.forEach((sh, s) => { if (!sh.closed) return; segments(sh).forEach((q, i) => {
+      for (let k=1; k<20; k++){
+        const t = k/20, u = 1-t, a = u*u*u, b = 3*u*u*t, c = 3*u*t*t, e = t*t*t;
+        const x = a*q[0]+b*q[2]+c*q[4]+e*q[6], y = a*q[1]+b*q[3]+c*q[5]+e*q[7];
+        const sp = toScr(bv, {x, y}), d = (sp.x-p.x)**2 + (sp.y-p.y)**2;
+        if (d < bd){ bd = d; best = {s, i, x, y}; }
+      }
+    }); });
+    return best;
+  }
+  let liveQueued = false;
+  function liveTrace(){
+    if (!bw.on){ requestBW(); return; }
+    if (!liveQueued){ liveQueued = true; requestAnimationFrame(() => { liveQueued = false; computeBase(); }); }
+  }
+  function traceDown(p){
+    const h = hitPoint(p);
+    if (h){
+      const q = shapes[h.s].pts[h.i];
+      tr = {mode:'drag', h, start:p, ox:q.x, oy:q.y, moved:false, before:snap()};
+      traceLoupe(q, p); requestBW(); return true;
+    }
+    tr = {mode:'add', p, start:p};
+    traceLoupe(clampImg(toImg(bv, p)), p); requestBW(); return true;
+  }
+  function traceMove(p){
+    if (tr.mode === 'drag'){
+      if (!tr.moved && Math.hypot(p.x-tr.start.x, p.y-tr.start.y) < 6*bv.dpr) return;
+      tr.moved = true; sel = tr.h;
+      const q = shapes[tr.h.s].pts[tr.h.i], n = clampImg({x:tr.ox + (p.x-tr.start.x)/bv.s, y:tr.oy + (p.y-tr.start.y)/bv.s});
+      q.x = n.x; q.y = n.y;
+      traceLoupe(q, p); liveTrace(); requestBW();
+    } else { tr.p = p; traceLoupe(clampImg(toImg(bv, p)), p); requestBW(); }
+  }
+  function traceUp(){
+    const t = tr; tr = null; loupe.hidden = true;
+    if (t.mode === 'drag'){
+      if (t.moved) pushUndo({kind:'trace', snap:t.before});
+      else {
+        const sh = shapes[t.h.s];
+        if (t.h.s === active && t.h.i === 0 && sh.pts.length >= 3){
+          pushUndo({kind:'trace', snap:snap()}); sh.closed = true; active = -1; sel = null;
+        } else if (active >= 0){ t.mode = 'add'; t.p = t.start; }   // while drawing, a tap always adds a point
+        else sel = (sel && sel.s === t.h.s && sel.i === t.h.i) ? null : t.h;   // tap a selected point again to deselect
+      }
+      if (t.mode === 'drag'){ afterTraceChange(); return; }
+    }
+    const ip = toImg(bv, t.p), m = Math.max(crop.w, crop.h)*0.03;
+    if (ip.x < -m || ip.y < -m || ip.x > crop.w+m || ip.y > crop.h+m){ requestBW(); return; }   // well outside the image
+    const q = clampImg(ip), before = snap();
+    if (active >= 0){
+      shapes[active].pts.push({x:q.x, y:q.y, c:newCurve}); sel = {s:active, i:shapes[active].pts.length-1};
+    } else {
+      const hs = hitSegment(t.p);
+      if (hs){ shapes[hs.s].pts.splice(hs.i+1, 0, {x:hs.x, y:hs.y, c:newCurve}); sel = {s:hs.s, i:hs.i+1}; }
+      else { shapes.push({pts:[{x:q.x, y:q.y, c:newCurve}], closed:false}); active = shapes.length-1; sel = {s:active, i:0}; }
+    }
+    pushUndo({kind:'trace', snap:before}); afterTraceChange();
+  }
+  function traceCancel(){
+    if (tr && tr.mode === 'drag' && tr.moved) restoreSnap(tr.before);
+    tr = null; loupe.hidden = true; afterTraceChange();
+  }
+  function afterTraceChange(){
+    if (sel && !(shapes[sel.s] && shapes[sel.s].pts[sel.i])) sel = null;
+    syncTraceUI(); syncTools();
+    if (bw.on) computeBase(); else requestBW();
+  }
+  function removeShape(i){ shapes.splice(i, 1); if (active === i) active = -1; else if (active > i) active--; }
+  function syncTraceUI(){
+    const cur = sel ? shapes[sel.s].pts[sel.i].c : newCurve;
+    [...$('ptType').children].forEach(b => b.setAttribute('aria-pressed', (b.dataset.pt === 'curve') === cur));
+    $('delPt').disabled = !sel;
+    $('closeShape').disabled = !(active >= 0 && shapes[active].pts.length >= 3);
+    $('clearTrace').disabled = !shapes.length;
+    $('traceHint').textContent =
+      !shapes.length ? 'Tap around the edge to place points. Hold your finger down to aim with the magnifier.'
+      : active >= 0 ? (shapes[active].pts.length >= 3 ? 'Tap the first point (ringed) to close the shape.' : 'Keep tapping around the edge.')
+      : sel ? 'Point selected: set Corner or Curve, drag it, or delete it.'
+      : 'Drag points to adjust. Tap a line to add a point. Tap a point to select it. A shape inside a shape becomes a hole.';
+  }
+  $('ptType').onclick = e => {
+    const t = e.target.closest('button'); if (!t) return;
+    const v = t.dataset.pt === 'curve'; newCurve = v;
+    if (sel){
+      const q = shapes[sel.s].pts[sel.i];
+      if (q.c !== v){ pushUndo({kind:'trace', snap:snap()}); q.c = v; afterTraceChange(); return; }
+    }
+    syncTraceUI();
+  };
+  $('delPt').onclick = () => {
+    if (!sel) return;
+    pushUndo({kind:'trace', snap:snap()});
+    const sh = shapes[sel.s]; sh.pts.splice(sel.i, 1);
+    if (!sh.pts.length) removeShape(sel.s);
+    else if (sh.closed && sh.pts.length < 3){ if (active < 0){ sh.closed = false; active = sel.s; } else removeShape(sel.s); }
+    sel = null; afterTraceChange();
+  };
+  $('closeShape').onclick = () => {
+    if (active < 0 || shapes[active].pts.length < 3) return;
+    pushUndo({kind:'trace', snap:snap()}); shapes[active].closed = true; active = -1; sel = null; afterTraceChange();
+  };
+  $('clearTrace').onclick = () => {
+    if (!shapes.length) return;
+    pushUndo({kind:'trace', snap:snap()}); shapes = []; active = -1; sel = null; afterTraceChange();
+  };
 
   gestures(bv, {
     down(p){
       if (!crop) return false;
-      if (bw.tool === 'pick'){ pickPending = p; return true; }   // sample on release, so a pinch never picks
+      const t = bw.tool;
+      if (t === 'view'){ pan = {p, x:bv.x, y:bv.y}; return true; }
+      if (t === 'trace') return traceDown(p);
+      if (t === 'pick'){ pickPending = p; return true; }   // sample on release, so a pinch never picks
       clearTimeout(fullTimer);
       stroke = {tiles:new Map(), last:null}; strokeTo(p); return true;
     },
     move(p){
+      if (pan){ bv.x = pan.x + p.x - pan.p.x; bv.y = pan.y + p.y - pan.p.y; requestBW(); return; }
+      if (tr){ traceMove(p); return; }
       if (pickPending){ if (Math.hypot(p.x-pickPending.x, p.y-pickPending.y) > 12*bv.dpr) pickPending = null; return; }
       if (stroke) strokeTo(p);
     },
     up(){
+      if (pan){ pan = null; return; }
+      if (tr){ traceUp(); return; }
       if (pickPending){ const p = pickPending; pickPending = null; pickAt(p); return; }
-      if (pickPending === null && bw.tool === 'pick') return;
-      if (stroke && stroke.tiles.size){ undoStack.push(stroke.tiles); if (undoStack.length > 40) undoStack.shift(); redoStack = []; }
-      stroke = null; bwCursor = null; afterEditChange();
+      if (stroke){
+        if (stroke.tiles.size) pushUndo({kind:'tiles', m:stroke.tiles});
+        stroke = null; bwCursor = null; afterEditChange();
+      }
     },
-    cancel(){ pickPending = null; if (bw.tool === 'pick') return; if (stroke){ tilesRestore(stroke.tiles); stroke = null; } bwCursor = null; afterEditChange(); },
+    cancel(){
+      pan = null; pickPending = null;
+      if (tr){ traceCancel(); return; }
+      if (stroke){ tilesRestore(stroke.tiles); stroke = null; afterEditChange(); }
+      bwCursor = null; requestBW();
+    },
     hover(p){ bwCursor = p; requestBW(); },
     view(){ requestBW(); }
   });
@@ -737,10 +1006,10 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     bw.col = [R/n|0, G/n|0, B/n|0]; bw.picked = true; $('bgCol').value = hex(bw.col); computeBase();
   }
 
-  function renderFullLater(){ clearTimeout(fullTimer); fullTimer = setTimeout(renderFull, 500); }
+  function renderFullLater(){ clearTimeout(fullTimer); fullTimer = setTimeout(renderFull, 600); }
   function renderFull(){
     if (!crop || !bw.on) return;
-    const out = processBW(crop.data, crop.w, crop.h);
+    const out = maskImage(crop.w, crop.h, () => crop.data);
     applyEdits(out.data, crop.w, crop.h);
     const c = document.createElement('canvas'); c.width = crop.w; c.height = crop.h;
     c.getContext('2d').putImageData(out, 0, 0);
@@ -750,10 +1019,25 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     }, 'image/png');
   }
   function setBW(on){
-    bw.on = on; $('bwBox').hidden = !on; $('result').classList.toggle('bw', on);
+    bw.on = on; $('bwBox').hidden = !on;
     if (on){ if (crop) enterBW(); }
-    else { clearTimeout(fullTimer); if (jpgBlob) setImg(jpgBlob); }
-    syncSaveUI();
+    else clearTimeout(fullTimer);
+    syncTools(); syncSaveUI(); requestBW();
+  }
+  function syncTools(){
+    const ta = traceActive();
+    const vis = {view:true, trace:true, pick:bw.on && !ta, erase:bw.on, paint:bw.on};
+    [...$('tool').children].forEach(b => b.hidden = !vis[b.dataset.t]);
+    if (!vis[bw.tool]){ setTool('view'); return; }
+    $('brushRow').hidden = !(bw.tool === 'erase' || bw.tool === 'paint');
+    $('traceBar').hidden = bw.tool !== 'trace';
+    $('traceNote').hidden = !ta;
+  }
+  function setTool(t){
+    bw.tool = t; [...$('tool').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
+    $('bwView').style.cursor = t === 'view' ? 'grab' : (t === 'trace' || t === 'pick') ? 'crosshair' : 'none';
+    if (t !== 'trace') sel = null;
+    syncTools(); syncTraceUI(); requestBW();
   }
   $('bwOn').addEventListener('change', e => setBW(e.target.checked));
   document.querySelector('details.more').addEventListener('toggle', () => requestBW());
@@ -767,13 +1051,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     const c = e.target.dataset.c; if (c === undefined) return;
     bw.clean = +c; [...$('clean').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.c === c)); computeBase();
   };
-  $('tool').onclick = e => {
-    const t = e.target.dataset.t; if (!t) return;
-    bw.tool = t; [...$('tool').children].forEach(b => b.setAttribute('aria-pressed', b.dataset.t === t));
-    $('brushRow').hidden = t === 'pick';
-    $('bwView').style.cursor = t === 'pick' ? 'crosshair' : 'none';
-    requestBW();
-  };
+  $('tool').onclick = e => { const b = e.target.closest('button'); if (b && b.dataset.t) setTool(b.dataset.t); };
 
   // Remove small black specks and fill small see-through pinholes inside black areas.
   function cleanUp(o, W, H, minArea){
@@ -867,7 +1145,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     c.getContext('2d').putImageData(crop.data, 0, 0);
     const s = document.createElement('canvas'); s.width = W; s.height = H;
     const sg = s.getContext('2d'); sg.drawImage(c, 0, 0, W, H);
-    const out = processBWScaled(sg.getImageData(0,0,W,H), W, H, (W*H)/(crop.w*crop.h)).data;
+    const out = maskImage(W, H, () => sg.getImageData(0,0,W,H)).data;
     const m = maps(W, H); applyEdits(out, W, H, m.colMap, m.rowMap);
     const mask = new Uint8Array(W*H); let any = 0;
     for (let i=0;i<W*H;i++){ if (out[i*4+3] >= 128){ mask[i]=1; any=1; } }
@@ -893,16 +1171,33 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${mmW}mm" height="${mmH}mm" viewBox="0 0 ${W} ${H}">\n<path fill="#000000" fill-rule="evenodd" d="${d}"/>\n</svg>\n`;
     return {blob: new Blob([svg], {type:'image/svg+xml'}), pts, mmW, mmH};
   }
+  // Traced outlines go out as the exact points and curves (no pixel tracing).
+  function buildVectorSVG(){
+    const f = v => +v.toFixed(2); let d = '', pts = 0;
+    for (const sh of shapes){
+      if (!sh.closed || sh.pts.length < 3) continue;
+      const S = segments(sh); pts += sh.pts.length;
+      d += 'M' + f(S[0][0]) + ' ' + f(S[0][1]);
+      for (const q of S){
+        const straight = q[2] === q[0] && q[3] === q[1] && q[4] === q[6] && q[5] === q[7];
+        d += straight ? 'L' + f(q[6]) + ' ' + f(q[7]) : 'C' + [q[2],q[3],q[4],q[5],q[6],q[7]].map(f).join(' ');
+      }
+      d += 'Z';
+    }
+    const mmW = +crop.mmW.toFixed(2), mmH = +crop.mmH.toFixed(2);
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${mmW}mm" height="${mmH}mm" viewBox="0 0 ${crop.w} ${crop.h}">\n<path fill="#000000" fill-rule="evenodd" d="${d}"/>\n</svg>\n`;
+    return {blob: new Blob([svg], {type:'image/svg+xml'}), pts, mmW, mmH, vector:true};
+  }
   $('svgBtn').onclick = () => {
     if (!crop) return;
     $('busy').textContent = 'Tracing outlines…'; $('busy').hidden = false;
     setTimeout(() => {
       let r = null;
-      try { r = buildSVG(); } catch(err){ r = undefined; }
+      try { r = (traceActive() && !edit.some(v => v)) ? buildVectorSVG() : buildSVG(); } catch(err){ r = undefined; }
       $('busy').hidden = true;
       if (r === undefined){ $('saveHint').textContent = 'Tracing ran out of memory. Try a smaller crop size.'; return; }
       if (!r){ $('saveHint').textContent = 'Nothing to trace. Lower the tolerance so some black remains.'; return; }
-      $('saveHint').textContent = `SVG: ${r.mmW} × ${r.mmH} mm, ${r.pts.toLocaleString()} points.` + (r.pts > 20000 ? ' That is a lot for Tinkercad; raise smoothing or clean-up.' : '');
+      $('saveHint').textContent = `SVG: ${r.mmW} × ${r.mmH} mm, ${r.pts.toLocaleString()} points` + (r.vector ? ', exact traced outline.' : '.') + (r.pts > 20000 ? ' That is a lot for Tinkercad; raise smoothing or clean-up.' : '');
       saveBlob(r.blob, crop.base + '-trace.svg');
     }, 30);
   };
