@@ -63,6 +63,21 @@ h1 .logo{width:28px;height:28px;flex:none}
 .pt{width:9px;height:9px;border-radius:50%;border:2px solid var(--accent);background:var(--surface);flex:none}
 .pt.sq{border-radius:1px}
 #traceBar .row{gap:6px}
+body.panning canvas{cursor:grab!important}
+body.grabbing canvas{cursor:grabbing!important}
+body.dropping .stage{outline:3px dashed var(--accent);outline-offset:-8px}
+.deskonly{display:none}
+@media (hover:hover) and (pointer:fine){ .deskonly{display:block} }
+.keys{line-height:1.6}
+.keys b{color:var(--fg)}
+@media (min-width:900px){
+  .app{max-width:none;display:grid;grid-template-columns:minmax(0,1fr) 360px;grid-template-rows:auto minmax(0,1fr);column-gap:20px;padding-inline:20px}
+  .app > header{grid-column:1 / -1}
+  .stage{grid-column:1;grid-row:2;margin-bottom:20px}
+  .deck{grid-column:2;grid-row:2;overflow-y:auto;padding-block:0 20px;min-height:0}
+  .row > .chips{flex-wrap:wrap;overflow:visible}
+  .toast{top:64px}
+}
 details.more summary{font-size:.82rem;font-weight:700;color:var(--muted);cursor:pointer;padding-block:2px}
 details.more[open] summary{margin-bottom:8px}
 .switch{display:flex;align-items:center;gap:10px;font-weight:700;font-size:.92rem;cursor:pointer}
@@ -153,6 +168,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
       <button class="btn" id="pickBtn">Gallery</button>
       <button class="btn primary" id="cropBtn">Crop</button>
     </div>
+    <p class="hint deskonly">You can also drag a photo onto the window or paste one with ⌘V. Zoom with a trackpad pinch, move with a two-finger swipe.</p>
     <input class="file" id="camIn" type="file" accept="image/*" capture="environment">
     <input class="file" id="galIn" type="file" accept="image/*">
   </div>
@@ -205,6 +221,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
         </div>
       </details>
     </div>
+    <p class="hint deskonly keys"><b>Shortcuts</b> M move · T trace · P pick · E erase · B paint · Space+drag move · +/− zoom · 0 fit · ⌘Z undo · ⇧⌘Z redo · Return close shape · Delete point · Esc deselect</p>
     <p class="hint" id="saveHint">Tap Save, or press and hold the image to save it to your photos.</p>
     <div class="row">
       <button class="btn" id="backBtn">Adjust</button>
@@ -230,6 +247,8 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     {id:'custom', name:'Custom'}
   ];
   const MAX_SRC = 3200, MAX_OUT = 6000;
+  const TOUCH = matchMedia('(pointer: coarse)').matches;                       // phones and tablets
+  const DESK = matchMedia('(hover: hover) and (pointer: fine)').matches;        // Mac / desktop with trackpad or mouse
   const $ = id => document.getElementById(id);
   const view = $('view'), vctx = view.getContext('2d');
   const loupe = $('loupe'), lctx = loupe.getContext('2d');
@@ -358,12 +377,18 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   const toScr = (v,p) => ({x:v.x + p.x*v.s, y:v.y + p.y*v.s});
 
   // One finger drives the tool (h.down / move / up); two fingers pinch-zoom and pan.
+  let spaceDown = false;
   function gestures(v, h){
-    const pts = new Map(); let single = false, pinch = null;
+    const pts = new Map(); let single = false, pinch = null, grab = null;
     const pt = e => { const r = v.canvas.getBoundingClientRect(); return {x:(e.clientX-r.left)*v.canvas.width/(r.width||1), y:(e.clientY-r.top)*v.canvas.height/(r.height||1)}; };
     v.canvas.addEventListener('pointerdown', e => {
       if (refitKeep(v)) h.view();
       try { v.canvas.setPointerCapture(e.pointerId); } catch(_){}
+      if (e.pointerType === 'mouse' && (spaceDown || e.button === 1)){   // space-drag or middle-drag moves the view
+        e.preventDefault(); const p = pt(e); grab = {id:e.pointerId, p, x:v.x, y:v.y};
+        document.body.classList.add('grabbing'); return;
+      }
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       pts.set(e.pointerId, pt(e));
       if (pts.size === 1){ single = !!h.down(pt(e)); }
       else if (pts.size === 2){
@@ -373,7 +398,8 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
       }
     });
     v.canvas.addEventListener('pointermove', e => {
-      if (!pts.has(e.pointerId)){ if (e.pointerType === 'mouse' && h.hover) h.hover(pt(e)); return; }
+      if (grab && e.pointerId === grab.id){ const p = pt(e); v.x = grab.x + p.x - grab.p.x; v.y = grab.y + p.y - grab.p.y; h.view(); return; }
+      if (!pts.has(e.pointerId)){ if (e.pointerType === 'mouse' && h.hover) h.hover(spaceDown ? null : pt(e)); return; }
       pts.set(e.pointerId, pt(e));
       if (pinch && pts.size >= 2){
         const [a,b] = [...pts.values()], d = Math.hypot(a.x-b.x, a.y-b.y) || 1, cx = (a.x+b.x)/2, cy = (a.y+b.y)/2;
@@ -383,6 +409,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
       } else if (single) h.move(pt(e));
     });
     const up = e => {
+      if (grab && e.pointerId === grab.id){ grab = null; document.body.classList.remove('grabbing'); return; }
       if (!pts.delete(e.pointerId)) return;
       if (pinch){ if (pts.size < 2) pinch = null; return; }   // a finger left over from a pinch does nothing
       if (single && pts.size === 0){ single = false; h.up(); }
@@ -390,10 +417,14 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     v.canvas.addEventListener('pointerup', up);
     v.canvas.addEventListener('pointercancel', up);
     v.canvas.addEventListener('pointerleave', () => { if (h.hover && !pts.size) h.hover(null); });
+    // trackpad: pinch zooms (arrives as ctrl+wheel), two-finger swipe moves; mouse: ⌘/ctrl + wheel zooms, wheel moves
     v.canvas.addEventListener('wheel', e => {
       e.preventDefault(); const p = pt(e);
-      zoomAt(v, p.x, p.y, v.s * Math.exp(-e.deltaY * 0.0015)); h.view();
+      if (e.ctrlKey || e.metaKey) zoomAt(v, p.x, p.y, v.s * Math.exp(-e.deltaY * (e.metaKey ? 0.0015 : 0.01)));
+      else { const k = (e.deltaMode === 1 ? 16 : 1) * v.dpr; v.x -= e.deltaX*k; v.y -= e.deltaY*k; }
+      h.view();
     }, {passive:false});
+    v.canvas.addEventListener('dblclick', () => { if (h.dbl) h.dbl(); });
   }
   function updateZoomUI(v){
     $('zoomUI').hidden = !v;
@@ -530,7 +561,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
   const bv = makeView($('bwView'));
 
   // manual trace: shapes in full-crop pixel coordinates; c = smooth curve through this point, else sharp corner
-  let shapes = [], active = -1, sel = null, newCurve = false, tr = null;
+  let shapes = [], active = -1, sel = null, newCurve = false, tr = null, hoverPt = null;
 
   $('cropBtn').onclick = () => {
     if (!src) return;
@@ -581,7 +612,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     $('saveBtn').textContent = bw.on ? 'Save PNG' : 'Save JPG';
     $('svgBtn').hidden = !bw.on;
     $('saveHint').textContent = !bw.on ? 'Save keeps the flattened photo. Turn on Black & transparent for a cutout.'
-      : pngStale ? 'Updating full-size PNG…' : 'Ready to save. Pinch with two fingers to zoom.';
+      : pngStale ? 'Updating full-size PNG…' : (DESK ? 'Ready to save. Pinch the trackpad or press + / − to zoom.' : 'Ready to save. Pinch with two fingers to zoom.');
   }
   function showEdit(){
     $('result').hidden = true; $('editDeck').hidden = false; $('doneDeck').hidden = true;
@@ -714,7 +745,10 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     } else drawClipped(g, (hi || s > prev.w/crop.w*1.3) ? crop.canvas : prev.colour, ox, oy, s);
   }
   const showOverlay = () => bw.tool === 'trace' || (!bw.on && shapes.length > 0);
-  function ghostPoint(){ return tr && tr.mode === 'add' ? clampImg(toImg(bv, tr.p)) : null; }
+  function ghostPoint(){
+    if (tr) return tr.mode === 'add' ? clampImg(toImg(bv, tr.p)) : null;
+    return hoverPt && bw.tool === 'trace' && !hitPoint(hoverPt) ? clampImg(toImg(bv, hoverPt)) : null;
+  }
   function drawOverlay(g, ox, oy, s, d){
     const ghost = ghostPoint();
     if (!shapes.length && !ghost) return;
@@ -930,7 +964,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     $('closeShape').disabled = !(active >= 0 && shapes[active].pts.length >= 3);
     $('clearTrace').disabled = !shapes.length;
     $('traceHint').textContent =
-      !shapes.length ? 'Tap around the edge to place points. Hold your finger down to aim with the magnifier.'
+      !shapes.length ? (DESK ? 'Click around the edge to place points. The magnifier follows your pointer.' : 'Tap around the edge to place points. Hold your finger down to aim with the magnifier.')
       : active >= 0 ? (shapes[active].pts.length >= 3 ? 'Tap the first point (ringed) to close the shape.' : 'Keep tapping around the edge.')
       : sel ? 'Point selected: set Corner or Curve, drag it, or delete it.'
       : 'Drag points to adjust. Tap a line to add a point. Tap a point to select it. A shape inside a shape becomes a hole.';
@@ -992,8 +1026,14 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
       if (stroke){ tilesRestore(stroke.tiles); stroke = null; afterEditChange(); }
       bwCursor = null; requestBW();
     },
-    hover(p){ bwCursor = p; requestBW(); },
-    view(){ requestBW(); }
+    hover(p){
+      bwCursor = p;
+      if (bw.tool === 'trace' && p && !tr){ hoverPt = p; traceLoupe(clampImg(toImg(bv, p)), p); }
+      else { hoverPt = null; if (!tr) loupe.hidden = true; }
+      requestBW();
+    },
+    dbl(){ if (bw.tool === 'view'){ resetView(bv); requestBW(); } },
+    view(){ requestBW(); if (hoverPt && !tr) traceLoupe(clampImg(toImg(bv, hoverPt)), hoverPt); }
   });
   // Pick tool: sample the background colour (7×7 average of the original crop).
   function pickAt(p){
@@ -1206,7 +1246,7 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     if (!downloads){
       // Self-hosted: share sheet on phones (Save Image / Save to Files), else a normal download.
       const file = new File([blob], name, {type: blob.type});
-      if (navigator.canShare && navigator.canShare({files:[file]})){
+      if (TOUCH && navigator.canShare && navigator.canShare({files:[file]})){
         try { await navigator.share({files:[file]}); return; }
         catch(err){ if (err && err.name === 'AbortError') return; }
       }
@@ -1228,6 +1268,59 @@ h1{cursor:default;-webkit-user-select:none;user-select:none;-webkit-tap-highligh
     const blob = bw.on ? pngBlob : jpgBlob; if (!blob) return;
     saveBlob(blob, crop.base + (bw.on ? '-cutout.png' : '.jpg'));
   };
+
+  // ---------- Mac / desktop: keyboard, drag & drop, paste ----------
+  function showToast(msg, ms){ const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms || 1600); }
+  const onDone = () => !$('doneDeck').hidden && crop;
+  const curView = () => onDone() ? bv : (src ? cv : null);
+  const redraw = v => v === cv ? draw() : requestBW();
+  document.addEventListener('keydown', e => {
+    const t = e.target, typing = (t.tagName === 'INPUT' && !/^(range|checkbox)$/.test(t.type)) || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA';
+    if (typing) return;
+    const mod = e.metaKey || e.ctrlKey, k = e.key;
+    if (k === ' '){ e.preventDefault(); if (!spaceDown){ spaceDown = true; document.body.classList.add('panning'); hoverPt = null; loupe.hidden = !tr && !drag; } return; }
+    if (mod && (k === 'z' || k === 'Z')){
+      if (!onDone()) return; e.preventDefault();
+      if (e.shiftKey) step(redoStack, undoStack); else step(undoStack, redoStack); return;
+    }
+    if (mod && (k === 'y' || k === 'Y')){ if (onDone()){ e.preventDefault(); step(redoStack, undoStack); } return; }
+    if (mod) return;
+    const v = curView();
+    if (v && (k === '+' || k === '=' || k === '-' || k === '_')){
+      e.preventDefault(); zoomAt(v, v.canvas.width/2, v.canvas.height/2, v.s * (k === '-' || k === '_' ? 1/1.25 : 1.25)); redraw(v); return;
+    }
+    if (v && k === '0'){ e.preventDefault(); resetView(v); redraw(v); return; }
+    if (!onDone()) return;
+    const toolKey = {m:'view', t:'trace', p:'pick', e:'erase', b:'paint'}[k.toLowerCase()];
+    if (toolKey){ const b = $('tool').querySelector(`[data-t="${toolKey}"]`); if (b && !b.hidden){ e.preventDefault(); setTool(toolKey); } return; }
+    if (bw.tool !== 'trace') return;
+    if ((k === 'Delete' || k === 'Backspace') && sel){ e.preventDefault(); $('delPt').click(); return; }
+    if (k === 'Enter' && !$('closeShape').disabled){ e.preventDefault(); $('closeShape').click(); return; }
+    if (k === 'Escape'){ if (tr) traceCancel(); sel = null; syncTraceUI(); requestBW(); }
+  });
+  document.addEventListener('keyup', e => {
+    if (e.key === ' ' && spaceDown){ e.preventDefault(); spaceDown = false; document.body.classList.remove('panning'); }
+  });
+  window.addEventListener('blur', () => { spaceDown = false; document.body.classList.remove('panning', 'grabbing'); });
+
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+  window.addEventListener('dragover', e => { if (hasFiles(e)){ e.preventDefault(); document.body.classList.add('dropping'); } });
+  window.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+  window.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); document.body.classList.remove('dropping');
+    const f = [...e.dataTransfer.files].find(f => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name));
+    if (f) loadFile(f); else showToast('Drop an image file (JPG, PNG or HEIC).');
+  });
+  window.addEventListener('paste', e => {
+    const it = [...((e.clipboardData && e.clipboardData.items) || [])].find(i => i.kind === 'file' && /^image\//.test(i.type));
+    if (!it) return;
+    e.preventDefault(); loadFile(it.getAsFile()); showToast('Pasted image loaded');
+  });
+  if (DESK){
+    $('takeBtn').textContent = 'Open image…'; $('pickBtn').hidden = true;
+    $('takeBtn').onclick = () => $('galIn').click();
+  }
 
   // ---------- secret update: tap the logo 5 times ----------
   let taps = [];
